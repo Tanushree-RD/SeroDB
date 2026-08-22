@@ -22,3 +22,11 @@ else()
     target_compile_options(serodb_options INTERFACE -Wall -Wextra -Wpedantic)
 endif()
 
+add_executable(serodb
+    src/main.cpp
+)
+
+target_link_libraries(serodb
+    PRIVATE
+        serodb_options
+)
