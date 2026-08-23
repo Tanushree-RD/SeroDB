@@ -1,7 +1,9 @@
 #include "serodb/row.hpp"
+#include "serodb/storage.hpp"
 
 #include <algorithm>
 #include <cstdint>
+#include <exception>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -151,9 +153,19 @@ void print_parse_error(ParseResult result)
     }
 }
 
-void execute_insert_statement(const serodb::Row& row, std::vector<serodb::Row>& rows)
+void execute_insert_statement(
+    const serodb::Row& row,
+    std::vector<serodb::Row>& rows,
+    const std::string& database_path)
 {
     rows.push_back(row);
+    try {
+        serodb::save_rows_to_file(database_path, rows);
+    } catch (...) {
+        rows.pop_back();
+        throw;
+    }
+
     std::cout << "Executed.\n";
 }
 
@@ -192,11 +204,14 @@ void execute_select_statement(const std::vector<serodb::Row>& rows)
     std::cout << rows.size() << " row(s).\n";
 }
 
-void execute_statement(const Statement& statement, std::vector<serodb::Row>& rows)
+void execute_statement(
+    const Statement& statement,
+    std::vector<serodb::Row>& rows,
+    const std::string& database_path)
 {
     switch (statement.type) {
     case StatementType::insert:
-        execute_insert_statement(statement.row, rows);
+        execute_insert_statement(statement.row, rows, database_path);
         break;
     case StatementType::select:
         execute_select_statement(rows);
@@ -208,7 +223,16 @@ void execute_statement(const Statement& statement, std::vector<serodb::Row>& row
 
 int main()
 {
+    const std::string database_path = serodb::default_database_path;
     std::vector<serodb::Row> rows;
+
+    try {
+        rows = serodb::load_rows_from_file(database_path);
+    } catch (const std::exception& error) {
+        std::cerr << "Failed to load database: " << error.what() << '\n';
+        return 1;
+    }
+
     std::string input;
 
     while (true) {
@@ -226,7 +250,11 @@ int main()
         const auto result = parse_statement(input, statement);
 
         if (result == ParseResult::success) {
-            execute_statement(statement, rows);
+            try {
+                execute_statement(statement, rows, database_path);
+            } catch (const std::exception& error) {
+                std::cerr << "Storage error: " << error.what() << '\n';
+            }
         } else {
             print_parse_error(result);
         }

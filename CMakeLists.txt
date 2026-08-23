@@ -24,6 +24,7 @@ endif()
 
 add_library(serodb_core
     src/row.cpp
+    src/storage.cpp
 )
 
 target_include_directories(serodb_core
