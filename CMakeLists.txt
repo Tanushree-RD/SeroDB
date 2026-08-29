@@ -24,6 +24,7 @@ endif()
 
 add_library(serodb_core
     src/row.cpp
+    src/storage.cpp
     src/Database.cpp
     src/StorageManager.cpp
     src/Parser.cpp

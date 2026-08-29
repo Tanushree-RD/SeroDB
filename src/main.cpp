@@ -1,7 +1,9 @@
 #include "serodb/Database.hpp"
 #include "serodb/Parser.hpp"
 #include "serodb/Statement.hpp"
+#include "serodb/storage.hpp"
 
+#include <iomanip>
 #include <iostream>
 #include <string>
 
