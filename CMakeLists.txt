@@ -22,11 +22,16 @@ else()
     target_compile_options(serodb_options INTERFACE -Wall -Wextra -Wpedantic)
 endif()
 
+# -----------------------------------------------------------------------
+# Core library — the storage engine (Pager, Table, Cursor, Executor, Parser)
+# -----------------------------------------------------------------------
+
 add_library(serodb_core
     src/row.cpp
-    src/storage.cpp
-    src/Database.cpp
-    src/StorageManager.cpp
+    src/Pager.cpp
+    src/Table.cpp
+    src/Cursor.cpp
+    src/Executor.cpp
     src/Parser.cpp
 )
 
@@ -40,6 +45,10 @@ target_link_libraries(serodb_core
         serodb_options
 )
 
+# -----------------------------------------------------------------------
+# REPL executable
+# -----------------------------------------------------------------------
+
 add_executable(serodb
     src/main.cpp
 )
@@ -49,3 +58,19 @@ target_link_libraries(serodb
         serodb_core
         serodb_options
 )
+
+# -----------------------------------------------------------------------
+# Tests
+# -----------------------------------------------------------------------
+
+add_executable(serodb_tests
+    tests/tests.cpp
+)
+
+target_link_libraries(serodb_tests
+    PRIVATE
+        serodb_core
+        serodb_options
+)
+
+add_test(NAME serodb_tests COMMAND serodb_tests)

@@ -31,7 +31,29 @@ std::string to_lower_copy(const std::string& s)
     return result;
 }
 
-} // namespace
+} // anonymous namespace
+
+// -----------------------------------------------------------------------
+// Meta‑command parsing
+// -----------------------------------------------------------------------
+
+MetaCommandResult Parser::parse_meta_command(const std::string& input,
+                                              MetaCommand& outCommand) const
+{
+    const std::string trimmed = to_lower_copy(trim(input));
+
+    if (trimmed == ".exit")      { outCommand = MetaCommand::Exit;      return MetaCommandResult::success; }
+    if (trimmed == ".help")      { outCommand = MetaCommand::Help;      return MetaCommandResult::success; }
+    if (trimmed == ".tables")    { outCommand = MetaCommand::Tables;    return MetaCommandResult::success; }
+    if (trimmed == ".constants") { outCommand = MetaCommand::Constants; return MetaCommandResult::success; }
+    if (trimmed == ".stats")     { outCommand = MetaCommand::Stats;     return MetaCommandResult::success; }
+
+    return MetaCommandResult::unrecognized_command;
+}
+
+// -----------------------------------------------------------------------
+// Statement parsing  (prepareStatement)
+// -----------------------------------------------------------------------
 
 bool Parser::parse_id(const std::string& token, std::uint32_t& id) const
 {
@@ -59,7 +81,8 @@ bool Parser::parse_id(const std::string& token, std::uint32_t& id) const
     return true;
 }
 
-ParseResult Parser::parse(const std::string& input, Statement& outStatement) const
+ParseResult Parser::prepareStatement(const std::string& input,
+                                      Statement& outStatement) const
 {
     const std::string trimmed = trim(input);
     if (trimmed.empty()) {
@@ -68,21 +91,21 @@ ParseResult Parser::parse(const std::string& input, Statement& outStatement) con
 
     const std::string lower = to_lower_copy(trimmed);
 
+    // --- SELECT --------------------------------------------------------
     if (lower.rfind("select", 0) == 0) {
         // Accept "select" or "select *" or "select *  " etc.
         const std::string after = trim(trimmed.substr(6));
         if (after.empty() || after == "*") {
-            outStatement.type = StatementType::select;
+            outStatement.type = StatementType::Select;
             return ParseResult::success;
         }
         return ParseResult::unrecognized_statement;
     }
 
+    // --- INSERT --------------------------------------------------------
     if (lower.rfind("insert", 0) != 0) {
         return ParseResult::unrecognized_statement;
     }
-
-    // --- Parse INSERT (id, username, email) ---
 
     // Everything after "insert".
     std::string rest = trim(trimmed.substr(6));
@@ -137,7 +160,7 @@ ParseResult Parser::parse(const std::string& input, Statement& outStatement) con
         return ParseResult::email_too_long;
     }
 
-    outStatement.type = StatementType::insert;
+    outStatement.type = StatementType::Insert;
     outStatement.row.id = id;
     outStatement.row.username = username_str;
     outStatement.row.email = email_str;
