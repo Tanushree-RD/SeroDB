@@ -1,2 +1,0 @@
-C:\MinGW\bin\ar.exe qc libserodb_core.a CMakeFiles/serodb_core.dir/src/row.cpp.obj CMakeFiles/serodb_core.dir/src/Pager.cpp.obj CMakeFiles/serodb_core.dir/src/Table.cpp.obj CMakeFiles/serodb_core.dir/src/Cursor.cpp.obj CMakeFiles/serodb_core.dir/src/Executor.cpp.obj CMakeFiles/serodb_core.dir/src/Parser.cpp.obj
-C:\MinGW\bin\ranlib.exe libserodb_core.a

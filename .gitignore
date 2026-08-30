@@ -1,0 +1,19 @@
+# Build artifacts
+build/
+cmake-build-*/
+out/
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Database files
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db
