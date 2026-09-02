@@ -33,6 +33,7 @@ add_library(serodb_core
     src/Cursor.cpp
     src/Executor.cpp
     src/Parser.cpp
+    src/Tokenizer.cpp
 )
 
 target_include_directories(serodb_core

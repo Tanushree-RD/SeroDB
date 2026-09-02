@@ -16,6 +16,7 @@
 #include "serodb/Parser.hpp"
 #include "serodb/Statement.hpp"
 #include "serodb/Table.hpp"
+#include "serodb/Tokenizer.hpp"
 #include "serodb/row.hpp"
 
 #include <cstdio>
@@ -1078,6 +1079,343 @@ static bool test_table_row_slot_boundary()
 }
 
 // -----------------------------------------------------------------------
+// Test: Tokenizer — keywords
+// -----------------------------------------------------------------------
+
+static bool test_tokenizer_keywords()
+{
+    serodb::Tokenizer tok;
+
+    auto tokens = tok.tokenize("SELECT INSERT INTO VALUES FROM WHERE CREATE TABLE");
+    // 8 keywords + End = 9 tokens
+    ASSERT_EQ(tokens.size(), static_cast<std::size_t>(9));
+    ASSERT_EQ(tokens[0].kind, serodb::TokenKind::KW_SELECT);
+    ASSERT_EQ(tokens[1].kind, serodb::TokenKind::KW_INSERT);
+    ASSERT_EQ(tokens[2].kind, serodb::TokenKind::KW_INTO);
+    ASSERT_EQ(tokens[3].kind, serodb::TokenKind::KW_VALUES);
+    ASSERT_EQ(tokens[4].kind, serodb::TokenKind::KW_FROM);
+    ASSERT_EQ(tokens[5].kind, serodb::TokenKind::KW_WHERE);
+    ASSERT_EQ(tokens[6].kind, serodb::TokenKind::KW_CREATE);
+    ASSERT_EQ(tokens[7].kind, serodb::TokenKind::KW_TABLE);
+    ASSERT_EQ(tokens[8].kind, serodb::TokenKind::End);
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Tokenizer — keywords are case-insensitive
+// -----------------------------------------------------------------------
+
+static bool test_tokenizer_keyword_case()
+{
+    serodb::Tokenizer tok;
+
+    auto tokens = tok.tokenize("select Select SELECT sElEcT");
+    ASSERT_EQ(tokens.size(), static_cast<std::size_t>(5)); // 4 + End
+    for (std::size_t i = 0; i < 4; ++i) {
+        ASSERT_EQ(tokens[i].kind, serodb::TokenKind::KW_SELECT);
+    }
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Tokenizer — identifiers
+// -----------------------------------------------------------------------
+
+static bool test_tokenizer_identifiers()
+{
+    serodb::Tokenizer tok;
+
+    auto tokens = tok.tokenize("users id user_name _private");
+    ASSERT_EQ(tokens.size(), static_cast<std::size_t>(5)); // 4 + End
+    for (std::size_t i = 0; i < 4; ++i) {
+        ASSERT_EQ(tokens[i].kind, serodb::TokenKind::Identifier);
+    }
+    ASSERT_EQ(tokens[0].lexeme, "users");
+    ASSERT_EQ(tokens[1].lexeme, "id");
+    ASSERT_EQ(tokens[2].lexeme, "user_name");
+    ASSERT_EQ(tokens[3].lexeme, "_private");
+
+    // Identifier with digits.
+    auto tokens2 = tok.tokenize("col1 table2");
+    ASSERT_EQ(tokens2.size(), static_cast<std::size_t>(3));
+    ASSERT_EQ(tokens2[0].kind, serodb::TokenKind::Identifier);
+    ASSERT_EQ(tokens2[0].lexeme, "col1");
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Tokenizer — integers
+// -----------------------------------------------------------------------
+
+static bool test_tokenizer_integers()
+{
+    serodb::Tokenizer tok;
+
+    auto tokens = tok.tokenize("0 1 42 999 1234567890");
+    ASSERT_EQ(tokens.size(), static_cast<std::size_t>(6)); // 5 + End
+    for (std::size_t i = 0; i < 5; ++i) {
+        ASSERT_EQ(tokens[i].kind, serodb::TokenKind::Integer);
+    }
+    ASSERT_EQ(tokens[0].int_value, 0);
+    ASSERT_EQ(tokens[1].int_value, 1);
+    ASSERT_EQ(tokens[2].int_value, 42);
+    ASSERT_EQ(tokens[3].int_value, 999);
+    ASSERT_EQ(tokens[4].int_value, 1234567890);
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Tokenizer — single-quoted strings
+// -----------------------------------------------------------------------
+
+static bool test_tokenizer_strings()
+{
+    serodb::Tokenizer tok;
+
+    // Simple string.
+    {
+        auto tokens = tok.tokenize("'hello'");
+        ASSERT_EQ(tokens.size(), static_cast<std::size_t>(2));
+        ASSERT_EQ(tokens[0].kind, serodb::TokenKind::String);
+        ASSERT_EQ(tokens[0].str_value, "hello");
+        ASSERT_EQ(tokens[0].lexeme, "'hello'");
+    }
+
+    // Empty string.
+    {
+        auto tokens = tok.tokenize("''");
+        ASSERT_EQ(tokens.size(), static_cast<std::size_t>(2));
+        ASSERT_EQ(tokens[0].kind, serodb::TokenKind::String);
+        ASSERT_EQ(tokens[0].str_value, "");
+    }
+
+    // Escaped quote: '' → '
+    {
+        auto tokens = tok.tokenize("'it''s'");
+        ASSERT_EQ(tokens.size(), static_cast<std::size_t>(2));
+        ASSERT_EQ(tokens[0].kind, serodb::TokenKind::String);
+        ASSERT_EQ(tokens[0].str_value, "it's");
+    }
+
+    // Unterminated string.
+    {
+        auto tokens = tok.tokenize("'hello");
+        ASSERT_EQ(tokens.size(), static_cast<std::size_t>(2));
+        ASSERT_EQ(tokens[0].kind, serodb::TokenKind::Error);
+    }
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Tokenizer — punctuation and operators
+// -----------------------------------------------------------------------
+
+static bool test_tokenizer_punctuation()
+{
+    serodb::Tokenizer tok;
+
+    auto tokens = tok.tokenize("( ) , ; * = < > <= >= <>");
+    // 11 punct + End = 12
+    ASSERT_EQ(tokens.size(), static_cast<std::size_t>(12));
+    ASSERT_EQ(tokens[0].kind,  serodb::TokenKind::LeftParen);
+    ASSERT_EQ(tokens[1].kind,  serodb::TokenKind::RightParen);
+    ASSERT_EQ(tokens[2].kind,  serodb::TokenKind::Comma);
+    ASSERT_EQ(tokens[3].kind,  serodb::TokenKind::Semicolon);
+    ASSERT_EQ(tokens[4].kind,  serodb::TokenKind::Asterisk);
+    ASSERT_EQ(tokens[5].kind,  serodb::TokenKind::Equals);
+    ASSERT_EQ(tokens[6].kind,  serodb::TokenKind::Less);
+    ASSERT_EQ(tokens[7].kind,  serodb::TokenKind::Greater);
+    ASSERT_EQ(tokens[8].kind,  serodb::TokenKind::LessEqual);
+    ASSERT_EQ(tokens[9].kind,  serodb::TokenKind::GreaterEqual);
+    ASSERT_EQ(tokens[10].kind, serodb::TokenKind::NotEquals);
+    ASSERT_EQ(tokens[11].kind, serodb::TokenKind::End);
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Tokenizer — whitespace and comments
+// -----------------------------------------------------------------------
+
+static bool test_tokenizer_whitespace_and_comments()
+{
+    serodb::Tokenizer tok;
+
+    // Extra whitespace between tokens.
+    {
+        auto tokens = tok.tokenize("  select   *   from   users  ");
+        // SELECT * FROM users End = 5
+        ASSERT_EQ(tokens.size(), static_cast<std::size_t>(5));
+        ASSERT_EQ(tokens[0].kind, serodb::TokenKind::KW_SELECT);
+        ASSERT_EQ(tokens[1].kind, serodb::TokenKind::Asterisk);
+        ASSERT_EQ(tokens[2].kind, serodb::TokenKind::KW_FROM);
+        ASSERT_EQ(tokens[3].kind, serodb::TokenKind::Identifier);
+        ASSERT_EQ(tokens[3].lexeme, "users");
+    }
+
+    // Single-line comments.
+    {
+        auto tokens = tok.tokenize("select -- this is a comment\n* from users");
+        // SELECT * FROM users End = 5
+        ASSERT_EQ(tokens.size(), static_cast<std::size_t>(5));
+        ASSERT_EQ(tokens[0].kind, serodb::TokenKind::KW_SELECT);
+        ASSERT_EQ(tokens[1].kind, serodb::TokenKind::Asterisk);
+    }
+
+    // Empty input.
+    {
+        auto tokens = tok.tokenize("");
+        ASSERT_EQ(tokens.size(), static_cast<std::size_t>(1));
+        ASSERT_EQ(tokens[0].kind, serodb::TokenKind::End);
+    }
+
+    // Whitespace-only input.
+    {
+        auto tokens = tok.tokenize("   \t\n  ");
+        ASSERT_EQ(tokens.size(), static_cast<std::size_t>(1));
+        ASSERT_EQ(tokens[0].kind, serodb::TokenKind::End);
+    }
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Tokenizer — SQL-like statement tokenization
+// -----------------------------------------------------------------------
+
+static bool test_tokenizer_sql_statement()
+{
+    serodb::Tokenizer tok;
+
+    // A realistic INSERT statement.
+    {
+        auto tokens = tok.tokenize(
+            "INSERT INTO users (id, username, email) VALUES (1, 'alice', 'a@b.com')");        // INSERT INTO users (id, username, email) VALUES (1, 'alice', 'a@b.com') End
+        // = 19 tokens
+        ASSERT_EQ(tokens.size(), static_cast<std::size_t>(19));
+        ASSERT_EQ(tokens[0].kind, serodb::TokenKind::KW_INSERT);
+        ASSERT_EQ(tokens[1].kind, serodb::TokenKind::KW_INTO);
+        ASSERT_EQ(tokens[2].kind, serodb::TokenKind::Identifier);
+        ASSERT_EQ(tokens[2].lexeme, "users");
+        ASSERT_EQ(tokens[3].kind, serodb::TokenKind::LeftParen);
+        ASSERT_EQ(tokens[4].kind, serodb::TokenKind::Identifier);
+        ASSERT_EQ(tokens[5].kind, serodb::TokenKind::Comma);
+        ASSERT_EQ(tokens[6].kind, serodb::TokenKind::Identifier);
+        ASSERT_EQ(tokens[6].lexeme, "username");
+        ASSERT_EQ(tokens[9].kind, serodb::TokenKind::RightParen);
+        ASSERT_EQ(tokens[10].kind, serodb::TokenKind::KW_VALUES);
+        ASSERT_EQ(tokens[11].kind, serodb::TokenKind::LeftParen);
+        ASSERT_EQ(tokens[12].kind, serodb::TokenKind::Integer);
+        ASSERT_EQ(tokens[12].int_value, 1);
+        ASSERT_EQ(tokens[14].kind, serodb::TokenKind::String);
+        ASSERT_EQ(tokens[14].str_value, "alice");
+        ASSERT_EQ(tokens[16].kind, serodb::TokenKind::String);
+        ASSERT_EQ(tokens[16].str_value, "a@b.com");
+    }
+
+    // A SELECT with WHERE.
+    {
+        auto tokens = tok.tokenize(
+            "SELECT * FROM users WHERE id = 42;\n");
+        // SELECT * FROM users WHERE id = 42 ; End = 10
+        ASSERT_EQ(tokens.size(), static_cast<std::size_t>(10));
+        ASSERT_EQ(tokens[0].kind, serodb::TokenKind::KW_SELECT);
+        ASSERT_EQ(tokens[1].kind, serodb::TokenKind::Asterisk);
+        ASSERT_EQ(tokens[2].kind, serodb::TokenKind::KW_FROM);
+        ASSERT_EQ(tokens[3].kind, serodb::TokenKind::Identifier);
+        ASSERT_EQ(tokens[4].kind, serodb::TokenKind::KW_WHERE);
+        ASSERT_EQ(tokens[5].kind, serodb::TokenKind::Identifier);
+        ASSERT_EQ(tokens[6].kind, serodb::TokenKind::Equals);
+        ASSERT_EQ(tokens[7].kind, serodb::TokenKind::Integer);
+        ASSERT_EQ(tokens[7].int_value, 42);
+        ASSERT_EQ(tokens[8].kind, serodb::TokenKind::Semicolon);
+    }
+
+    // CREATE TABLE.
+    {
+        auto tokens = tok.tokenize(
+            "CREATE TABLE employees (id INT, name VARCHAR(50));");
+        // CREATE TABLE employees ( id INT , name VARCHAR ( 50 ) ) ; End = 15
+        ASSERT_EQ(tokens.size(), static_cast<std::size_t>(15));
+        ASSERT_EQ(tokens[0].kind, serodb::TokenKind::KW_CREATE);
+        ASSERT_EQ(tokens[1].kind, serodb::TokenKind::KW_TABLE);
+        ASSERT_EQ(tokens[2].kind, serodb::TokenKind::Identifier);
+        ASSERT_EQ(tokens[2].lexeme, "employees");
+    }
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Tokenizer — error tokens for unrecognized characters
+// -----------------------------------------------------------------------
+
+static bool test_tokenizer_errors()
+{
+    serodb::Tokenizer tok;
+
+    auto tokens = tok.tokenize("select @#$ from users");
+    // SELECT @ # $ FROM users End
+    ASSERT_EQ(tokens.size(), static_cast<std::size_t>(7));
+    ASSERT_EQ(tokens[0].kind, serodb::TokenKind::KW_SELECT);
+    ASSERT_EQ(tokens[1].kind, serodb::TokenKind::Error);
+    ASSERT_EQ(tokens[1].lexeme, "@");
+    ASSERT_EQ(tokens[2].kind, serodb::TokenKind::Error);
+    ASSERT_EQ(tokens[2].lexeme, "#");
+    ASSERT_EQ(tokens[3].kind, serodb::TokenKind::Error);
+    ASSERT_EQ(tokens[3].lexeme, "$");
+    ASSERT_EQ(tokens[4].kind, serodb::TokenKind::KW_FROM);
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Tokenizer — source position tracking
+// -----------------------------------------------------------------------
+
+static bool test_tokenizer_positions()
+{
+    serodb::Tokenizer tok;
+
+    auto tokens = tok.tokenize("select\n  id from users");
+    // SELECT \n id FROM users End
+    ASSERT_EQ(tokens[0].kind, serodb::TokenKind::KW_SELECT);
+    ASSERT_EQ(tokens[0].line, static_cast<std::size_t>(1));
+    ASSERT_EQ(tokens[0].column, static_cast<std::size_t>(1));
+
+    // 'id' is on line 2, column 3 (after two spaces).
+    ASSERT_EQ(tokens[1].kind, serodb::TokenKind::Identifier);
+    ASSERT_EQ(tokens[1].lexeme, "id");
+    ASSERT_EQ(tokens[1].line, static_cast<std::size_t>(2));
+    ASSERT_EQ(tokens[1].column, static_cast<std::size_t>(3));
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Tokenizer — token_kind_name
+// -----------------------------------------------------------------------
+
+static bool test_tokenizer_kind_names()
+{
+    // Smoke test: every kind returns a non-empty name.
+    ASSERT_TRUE(std::string(serodb::token_kind_name(serodb::TokenKind::Identifier)).size() > 0);
+    ASSERT_TRUE(std::string(serodb::token_kind_name(serodb::TokenKind::Integer)).size() > 0);
+    ASSERT_TRUE(std::string(serodb::token_kind_name(serodb::TokenKind::String)).size() > 0);
+    ASSERT_TRUE(std::string(serodb::token_kind_name(serodb::TokenKind::KW_SELECT)).size() > 0);
+    ASSERT_TRUE(std::string(serodb::token_kind_name(serodb::TokenKind::End)).size() > 0);
+    ASSERT_TRUE(std::string(serodb::token_kind_name(serodb::TokenKind::Error)).size() > 0);
+    ASSERT_TRUE(std::string(serodb::token_kind_name(serodb::TokenKind::NotEquals)).size() > 0);
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
 // Main — run all tests
 // -----------------------------------------------------------------------
 
@@ -1119,6 +1457,17 @@ int main()
     run_test("Executor invalid INSERT",       test_executor_invalid_insert);
     run_test("Serialization format",          test_serialization_format);
     run_test("Table row_slot boundary",       test_table_row_slot_boundary);
+    run_test("Tokenizer keywords",             test_tokenizer_keywords);
+    run_test("Tokenizer keyword case",         test_tokenizer_keyword_case);
+    run_test("Tokenizer identifiers",          test_tokenizer_identifiers);
+    run_test("Tokenizer integers",             test_tokenizer_integers);
+    run_test("Tokenizer strings",              test_tokenizer_strings);
+    run_test("Tokenizer punctuation",          test_tokenizer_punctuation);
+    run_test("Tokenizer whitespace/comments",  test_tokenizer_whitespace_and_comments);
+    run_test("Tokenizer SQL statement",        test_tokenizer_sql_statement);
+    run_test("Tokenizer error tokens",         test_tokenizer_errors);
+    run_test("Tokenizer source positions",     test_tokenizer_positions);
+    run_test("Tokenizer kind names",           test_tokenizer_kind_names);
 
     std::cout << "\n========================================\n"
               << "  Results: " << g_tests_passed << "/" << g_tests_run
