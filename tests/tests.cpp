@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <functional>
 #include <iostream>
 #include <sstream>
@@ -619,6 +620,464 @@ static bool test_constants()
 }
 
 // -----------------------------------------------------------------------
+// Test: Parser — email too long
+// -----------------------------------------------------------------------
+
+static bool test_parser_email_too_long()
+{
+    serodb::Parser parser;
+    serodb::Statement stmt;
+
+    // Email exactly at the limit should succeed.
+    std::string at_limit = "insert (1, alice, " + std::string(serodb::Row::max_email_length, 'e') + ")";
+    ASSERT_EQ(parser.prepareStatement(at_limit, stmt), serodb::ParseResult::success);
+
+    // Email one byte over the limit.
+    std::string over = "insert (1, alice, " + std::string(serodb::Row::max_email_length + 1, 'e') + ")";
+    ASSERT_EQ(parser.prepareStatement(over, stmt), serodb::ParseResult::email_too_long);
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Parser — extra text after valid statement
+// -----------------------------------------------------------------------
+
+static bool test_parser_extra_trailing_text()
+{
+    serodb::Parser parser;
+    serodb::Statement stmt;
+
+    // Extra text after a valid INSERT.
+    ASSERT_EQ(parser.prepareStatement("insert (1, a, b) junk", stmt),
+              serodb::ParseResult::syntax_error);
+
+    // Extra text after a valid SELECT.
+    ASSERT_EQ(parser.prepareStatement("select * extra", stmt),
+              serodb::ParseResult::unrecognized_statement);
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Parser — missing closing parenthesis
+// -----------------------------------------------------------------------
+
+static bool test_parser_missing_close_paren()
+{
+    serodb::Parser parser;
+    serodb::Statement stmt;
+
+    ASSERT_EQ(parser.prepareStatement("insert (1, a, b", stmt),
+              serodb::ParseResult::syntax_error);
+
+    // Missing both parens.
+    ASSERT_EQ(parser.prepareStatement("insert 1, a, b", stmt),
+              serodb::ParseResult::syntax_error);
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Parser — id boundary values
+// -----------------------------------------------------------------------
+
+static bool test_parser_id_boundary()
+{
+    serodb::Parser parser;
+    serodb::Statement stmt;
+
+    // id = 0 is valid.
+    ASSERT_EQ(parser.prepareStatement("insert (0, alice, a@b.com)", stmt),
+              serodb::ParseResult::success);
+    ASSERT_EQ(stmt.row.id, 0u);
+
+    // id = UINT32_MAX is valid.
+    ASSERT_EQ(parser.prepareStatement("insert (4294967295, alice, a@b.com)", stmt),
+              serodb::ParseResult::success);
+    ASSERT_EQ(stmt.row.id, 4294967295u);
+
+    // id = UINT32_MAX + 1 is invalid.
+    ASSERT_EQ(parser.prepareStatement("insert (4294967296, alice, a@b.com)", stmt),
+              serodb::ParseResult::invalid_id);
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Parser — id with leading zeros
+// -----------------------------------------------------------------------
+
+static bool test_parser_id_leading_zeros()
+{
+    serodb::Parser parser;
+    serodb::Statement stmt;
+
+    // Single zero is fine.
+    ASSERT_EQ(parser.prepareStatement("insert (0, a, b)", stmt),
+              serodb::ParseResult::success);
+
+    // Leading zeros on multi-digit numbers are rejected.
+    ASSERT_EQ(parser.prepareStatement("insert (01, a, b)", stmt),
+              serodb::ParseResult::invalid_id);
+
+    ASSERT_EQ(parser.prepareStatement("insert (007, a, b)", stmt),
+              serodb::ParseResult::invalid_id);
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Parser — SELECT is case-insensitive
+// -----------------------------------------------------------------------
+
+static bool test_parser_select_case_insensitive()
+{
+    serodb::Parser parser;
+    serodb::Statement stmt;
+
+    ASSERT_EQ(parser.prepareStatement("SELECT", stmt), serodb::ParseResult::success);
+    ASSERT_EQ(stmt.type, serodb::StatementType::Select);
+
+    ASSERT_EQ(parser.prepareStatement("Select", stmt), serodb::ParseResult::success);
+    ASSERT_EQ(stmt.type, serodb::StatementType::Select);
+
+    ASSERT_EQ(parser.prepareStatement("  SELECT  *  ", stmt), serodb::ParseResult::success);
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Row — empty fields are valid
+// -----------------------------------------------------------------------
+
+static bool test_row_empty_fields()
+{
+    serodb::Row row;
+    row.id = 1;
+    row.username = "";
+    row.email = "";
+    ASSERT_TRUE(row.is_valid());
+    ASSERT_TRUE(serodb::Row::is_valid_username(""));
+    ASSERT_TRUE(serodb::Row::is_valid_email(""));
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Row — id boundary values
+// -----------------------------------------------------------------------
+
+static bool test_row_id_boundary()
+{
+    serodb::Row row;
+    row.username = "alice";
+    row.email = "a@b.com";
+
+    // id = 0
+    row.id = 0;
+    ASSERT_TRUE(row.is_valid());
+
+    // id = UINT32_MAX
+    row.id = std::numeric_limits<std::uint32_t>::max();
+    ASSERT_TRUE(row.is_valid());
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Table — insert invalid row throws
+// -----------------------------------------------------------------------
+
+static bool test_table_insert_invalid_row()
+{
+    const std::string path = "test_insert_invalid.db";
+    TempFile tmp(path);
+
+    serodb::Table table(path);
+
+    // Username too long.
+    serodb::Row bad_user;
+    bad_user.id = 1;
+    bad_user.username = std::string(serodb::Row::max_username_length + 1, 'x');
+    bad_user.email = "a@b.com";
+
+    bool threw = false;
+    try {
+        table.insert(bad_user);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    ASSERT_TRUE(threw);
+    ASSERT_EQ(table.row_count(), static_cast<std::size_t>(0));
+
+    // Email too long.
+    serodb::Row bad_email;
+    bad_email.id = 2;
+    bad_email.username = "alice";
+    bad_email.email = std::string(serodb::Row::max_email_length + 1, 'e');
+
+    threw = false;
+    try {
+        table.insert(bad_email);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    ASSERT_TRUE(threw);
+    ASSERT_EQ(table.row_count(), static_cast<std::size_t>(0));
+
+    table.close();
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Table — insert when full throws
+// -----------------------------------------------------------------------
+
+static bool test_table_insert_full()
+{
+    const std::string path = "test_table_full.db";
+    TempFile tmp(path);
+
+    serodb::Table table(path);
+
+    // Fill to MAX_ROWS.
+    for (std::size_t i = 0; i < serodb::MAX_ROWS; ++i) {
+        serodb::Row row;
+        row.id = static_cast<std::uint32_t>(i);
+        row.username = "u" + std::to_string(i);
+        row.email = "u" + std::to_string(i) + "@t.com";
+        table.insert(row);
+    }
+    ASSERT_EQ(table.row_count(), serodb::MAX_ROWS);
+
+    // One more should fail.
+    serodb::Row extra;
+    extra.id = 999999;
+    extra.username = "overflow";
+    extra.email = "o@t.com";
+
+    bool threw = false;
+    try {
+        table.insert(extra);
+    } catch (const std::runtime_error& e) {
+        threw = true;
+        // Verify the error message mentions "full".
+        std::string msg = e.what();
+        ASSERT_TRUE(msg.find("full") != std::string::npos);
+    }
+    ASSERT_TRUE(threw);
+
+    table.close();
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Executor — SELECT on empty table
+// -----------------------------------------------------------------------
+
+static bool test_executor_select_empty()
+{
+    const std::string path = "test_exec_empty.db";
+    TempFile tmp(path);
+
+    serodb::Table table(path);
+    std::ostringstream out;
+
+    serodb::Statement stmt;
+    stmt.type = serodb::StatementType::Select;
+
+    auto r = serodb::Executor::execute(stmt, table, out);
+    ASSERT_EQ(r, serodb::ExecuteResult::success);
+    ASSERT_TRUE(out.str().find("0 row(s)") != std::string::npos);
+
+    table.close();
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Executor — multiple INSERTs then SELECT
+// -----------------------------------------------------------------------
+
+static bool test_executor_multiple_inserts()
+{
+    const std::string path = "test_exec_multi.db";
+    TempFile tmp(path);
+
+    serodb::Table table(path);
+    std::ostringstream out;
+
+    for (int i = 1; i <= 5; ++i) {
+        serodb::Statement stmt;
+        stmt.type = serodb::StatementType::Insert;
+        stmt.row.id = static_cast<std::uint32_t>(i);
+        stmt.row.username = "user" + std::to_string(i);
+        stmt.row.email = "u" + std::to_string(i) + "@test.com";
+
+        auto r = serodb::Executor::execute(stmt, table, out);
+        ASSERT_EQ(r, serodb::ExecuteResult::success);
+    }
+
+    ASSERT_EQ(table.row_count(), static_cast<std::size_t>(5));
+
+    // SELECT should show all 5 rows.
+    out.str("");
+    serodb::Statement sel;
+    sel.type = serodb::StatementType::Select;
+    auto r = serodb::Executor::execute(sel, table, out);
+    ASSERT_EQ(r, serodb::ExecuteResult::success);
+    ASSERT_TRUE(out.str().find("5 row(s)") != std::string::npos);
+    ASSERT_TRUE(out.str().find("user1") != std::string::npos);
+    ASSERT_TRUE(out.str().find("user5") != std::string::npos);
+
+    table.close();
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Executor — invalid row produces error output
+// -----------------------------------------------------------------------
+
+static bool test_executor_invalid_insert()
+{
+    const std::string path = "test_exec_invalid.db";
+    TempFile tmp(path);
+
+    serodb::Table table(path);
+    std::ostringstream out;
+
+    serodb::Statement stmt;
+    stmt.type = serodb::StatementType::Insert;
+    stmt.row.id = 1;
+    stmt.row.username = std::string(serodb::Row::max_username_length + 1, 'x');
+    stmt.row.email = "a@b.com";
+
+    auto r = serodb::Executor::execute(stmt, table, out);
+    ASSERT_EQ(r, serodb::ExecuteResult::error);
+    ASSERT_TRUE(out.str().find("Error") != std::string::npos);
+    ASSERT_EQ(table.row_count(), static_cast<std::size_t>(0));
+
+    table.close();
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Serialization format — raw byte layout verification
+// -----------------------------------------------------------------------
+
+static bool test_serialization_format()
+{
+    const std::string path = "test_serial_fmt.db";
+    TempFile tmp(path);
+
+    serodb::Row row;
+    row.id = 42;
+    row.username = "alice";
+    row.email = "a@b.com";
+
+    {
+        serodb::Table table(path);
+        table.insert(row);
+        table.close();
+    }
+
+    // Read raw page 0 and verify the on-disk layout.
+    {
+        serodb::Pager pager(path);
+        char* page0 = pager.get_page(0);
+
+        // Bytes 0..7: magic "SeroDB1\0".
+        ASSERT_TRUE(std::memcmp(page0, "SeroDB1\0", 8) == 0);
+
+        // Bytes 8..11: row count = 1 (little-endian uint32).
+        ASSERT_EQ(static_cast<unsigned char>(page0[8]), 1u);
+        ASSERT_EQ(static_cast<unsigned char>(page0[9]), 0u);
+        ASSERT_EQ(static_cast<unsigned char>(page0[10]), 0u);
+        ASSERT_EQ(static_cast<unsigned char>(page0[11]), 0u);
+
+        // Row data starts at offset HEADER_SIZE (12).
+        const char* row_data = page0 + serodb::HEADER_SIZE;
+
+        // First 4 bytes: id = 42 in little-endian.
+        ASSERT_EQ(static_cast<unsigned char>(row_data[0]), 42u);
+        ASSERT_EQ(static_cast<unsigned char>(row_data[1]), 0u);
+        ASSERT_EQ(static_cast<unsigned char>(row_data[2]), 0u);
+        ASSERT_EQ(static_cast<unsigned char>(row_data[3]), 0u);
+
+        // Next 32 bytes: username "alice" + null padding.
+        ASSERT_TRUE(std::memcmp(row_data + 4, "alice", 5) == 0);
+        ASSERT_EQ(static_cast<unsigned char>(row_data[4 + 5]), 0u); // null padding starts
+
+        // Next 255 bytes: email "a@b.com" + null padding.
+        ASSERT_TRUE(std::memcmp(row_data + 4 + 32, "a@b.com", 7) == 0);
+        ASSERT_EQ(static_cast<unsigned char>(row_data[4 + 32 + 7]), 0u); // null padding starts
+
+        pager.close();
+    }
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Test: Table — row_slot boundary between page 0 and page 1
+// -----------------------------------------------------------------------
+
+static bool test_table_row_slot_boundary()
+{
+    const std::string path = "test_slot_bound.db";
+    TempFile tmp(path);
+
+    // Insert exactly ROWS_IN_PAGE_0 rows — last one is the final row on page 0.
+    {
+        serodb::Table table(path);
+        for (std::size_t i = 0; i < serodb::ROWS_IN_PAGE_0; ++i) {
+            serodb::Row row;
+            row.id = static_cast<std::uint32_t>(i);
+            row.username = "p0" + std::to_string(i);
+            row.email = "p0" + std::to_string(i) + "@t.com";
+            table.insert(row);
+        }
+        ASSERT_EQ(table.row_count(), serodb::ROWS_IN_PAGE_0);
+        table.close();
+    }
+
+    // Insert one more — should land on page 1.
+    {
+        serodb::Table table(path);
+        serodb::Row row;
+        row.id = 999;
+        row.username = "page1user";
+        row.email = "p1@t.com";
+        table.insert(row);
+        ASSERT_EQ(table.row_count(), serodb::ROWS_IN_PAGE_0 + 1);
+        table.close();
+    }
+
+    // Reopen and verify all rows including the cross-page one.
+    {
+        serodb::Table table(path);
+        ASSERT_EQ(table.row_count(), serodb::ROWS_IN_PAGE_0 + 1);
+
+        std::size_t count = 0;
+        for (auto c = serodb::Cursor::table_start(table); !c.end(); c.advance()) {
+            serodb::Row row = c.read();
+            if (count < serodb::ROWS_IN_PAGE_0) {
+                ASSERT_EQ(row.id, static_cast<std::uint32_t>(count));
+            } else {
+                ASSERT_EQ(row.id, 999u);
+                ASSERT_EQ(row.username, "page1user");
+            }
+            ++count;
+        }
+        ASSERT_EQ(count, serodb::ROWS_IN_PAGE_0 + 1);
+
+        table.close();
+    }
+
+    return true;
+}
+
+// -----------------------------------------------------------------------
 // Main — run all tests
 // -----------------------------------------------------------------------
 
@@ -645,6 +1104,21 @@ int main()
     run_test("Cursor traversal",          test_cursor_traversal);
     run_test("Multi-page spanning",       test_multi_page);
     run_test("Executor INSERT + SELECT",  test_executor);
+    run_test("Parser email too long",         test_parser_email_too_long);
+    run_test("Parser extra trailing text",    test_parser_extra_trailing_text);
+    run_test("Parser missing close paren",    test_parser_missing_close_paren);
+    run_test("Parser id boundary",            test_parser_id_boundary);
+    run_test("Parser id leading zeros",       test_parser_id_leading_zeros);
+    run_test("Parser SELECT case-insensitive", test_parser_select_case_insensitive);
+    run_test("Row empty fields",              test_row_empty_fields);
+    run_test("Row id boundary",               test_row_id_boundary);
+    run_test("Table insert invalid row",      test_table_insert_invalid_row);
+    run_test("Table insert when full",        test_table_insert_full);
+    run_test("Executor SELECT empty",         test_executor_select_empty);
+    run_test("Executor multiple INSERTs",     test_executor_multiple_inserts);
+    run_test("Executor invalid INSERT",       test_executor_invalid_insert);
+    run_test("Serialization format",          test_serialization_format);
+    run_test("Table row_slot boundary",       test_table_row_slot_boundary);
 
     std::cout << "\n========================================\n"
               << "  Results: " << g_tests_passed << "/" << g_tests_run
